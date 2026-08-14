@@ -7,6 +7,84 @@ use RuntimeException;
 
 class GroqService
 {
+    public function generateStudyPlan(string $systemPrompt, string $userPrompt): array
+    {
+        $response = Http::withToken(config('services.groq.key'))
+            ->acceptJson()
+            ->timeout(60)
+            ->post('https://api.groq.com/openai/v1/chat/completions', [
+                'model' => config('services.groq.model'),
+                'messages' => [
+                    [
+                        'role' => 'system',
+                        'content' => $systemPrompt,
+                    ],
+                    [
+                        'role' => 'user',
+                        'content' => $userPrompt,
+                    ],
+                ],
+                'response_format' => [
+                    'type' => 'json_schema',
+                    'json_schema' => [
+                        'name' => 'study_plan',
+                        'strict' => true,
+                        'schema' => [
+                            'type' => 'object',
+                            'properties' => [
+                                'stages' => [
+                                    'type' => 'array',
+                                    'minItems' => 4,
+                                    'maxItems' => 4,
+                                    'items' => [
+                                        'type' => 'object',
+                                        'properties' => [
+                                            'title' => ['type' => 'string'],
+                                            'duration' => ['type' => 'string'],
+                                            'content' => ['type' => 'string'],
+                                            'explanation' => ['type' => 'string'],
+                                        ],
+                                        'required' => [
+                                            'title',
+                                            'duration',
+                                            'content',
+                                            'explanation',
+                                        ],
+                                        'additionalProperties' => false,
+                                    ],
+                                ],
+                            ],
+                            'required' => ['stages'],
+                            'additionalProperties' => false,
+                        ],
+                    ],
+                ],
+            ]);
+
+        if ($response->failed()) {
+            throw new RuntimeException(
+                'Error al generar el plan de estudio: '.$response->body()
+            );
+        }
+
+        $data = json_decode((string) $response->json('choices.0.message.content'), true);
+
+        if (! isset($data['stages']) || count($data['stages']) !== 4) {
+            throw new RuntimeException(
+                'Groq no devolvió un plan de estudio válido.'
+            );
+        }
+
+        foreach ($data['stages'] as &$stage) {
+            $stage['title'] = $this->cleanPlainText($stage['title']);
+            $stage['duration'] = $this->cleanPlainText($stage['duration']);
+            $stage['content'] = $this->cleanPlainText($stage['content']);
+            $stage['explanation'] = $this->cleanPlainText($stage['explanation']);
+        }
+
+        return $data['stages'];
+    }
+
     public function generate(string $systemPrompt, string $userPrompt): string
     {
         $response = Http::withToken(config('services.groq.key'))
@@ -43,7 +121,6 @@ class GroqService
 
         return $this->cleanPlainText($content);
     }
-
 
     public function generateQuestions(
         string $systemPrompt,
@@ -135,7 +212,6 @@ class GroqService
 
         return array_slice($data['questions'], 0, 5);
     }
-
 
     /*
     |--------------------------------------------------------------------------

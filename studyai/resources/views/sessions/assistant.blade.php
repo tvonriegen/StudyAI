@@ -39,6 +39,12 @@
 
     </div>
 
+    @if($errors->any())
+        <div class="mt-6 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+            {{ $errors->first() }}
+        </div>
+    @endif
+
 
     {{-- ================================================================ --}}
     {{-- NAVEGACIÓN --}}
@@ -206,6 +212,24 @@
 
 
         <div class="mt-10">
+
+            @if($activeStageIndex !== null)
+                @php($activeStage = $studySession->studyPlanStages()[$activeStageIndex])
+
+                <div class="mb-8 rounded-2xl border border-indigo-200 bg-indigo-50 p-6">
+                    <p class="text-sm font-semibold uppercase tracking-wide text-indigo-600">
+                        Etapa {{ $activeStageIndex + 1 }} de tu ruta
+                    </p>
+
+                    <p class="mt-2 text-lg font-bold text-indigo-950">
+                        {{ $activeStage['title'] }}
+                    </p>
+
+                    <p class="mt-2 text-sm leading-6 text-indigo-800">
+                        La explicación está priorizando el contenido de esta etapa.
+                    </p>
+                </div>
+            @endif
 
 
             {{-- ENCABEZADO EXPLICACIÓN --}}
@@ -434,6 +458,35 @@
 
                             @endif
 
+                            <form
+                                action="{{ route('sessions.explanation.alternative', $studySession) }}"
+                                method="POST"
+                            >
+                                @csrf
+                                <input type="hidden" name="section_index" value="{{ $index }}">
+
+                                @if($activeStageIndex !== null)
+                                    <input type="hidden" name="stage" value="{{ $activeStageIndex }}">
+                                @endif
+
+                                <button
+                                    type="submit"
+                                    class="rounded-xl border border-indigo-200 bg-white px-5 py-3 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-50"
+                                >
+                                    No lo entendí, explícamelo de otra forma
+                                </button>
+                            </form>
+
+                            @if($alternativeExplanation && $alternativeExplanation['section_index'] === $index)
+                                <section class="rounded-xl border border-violet-200 bg-violet-50 p-6">
+                                    <p class="font-bold text-violet-900">
+                                        Otra forma de entenderlo
+                                    </p>
+
+                                    <p class="mt-3 whitespace-pre-line leading-8 text-violet-950">{{ $alternativeExplanation['content'] }}</p>
+                                </section>
+                            @endif
+
                         </div>
 
                     </article>
@@ -441,6 +494,96 @@
                 @endforeach
 
             </div>
+
+            @if($activeStageIndex !== null)
+                @php($activeStageStatus = $studySession->stageStatus($activeStageIndex))
+
+                <section class="mt-8 rounded-2xl border border-indigo-200 bg-white p-6 shadow-sm sm:p-8">
+                    <p class="text-sm font-semibold uppercase tracking-wide text-indigo-600">
+                        Continúa tu ruta
+                    </p>
+
+                    @if($activeStageStatus === 'completed')
+                        <h3 class="mt-2 text-xl font-bold text-emerald-700">
+                            ✓ Esta etapa ya está completada
+                        </h3>
+                    @elseif($activeStageStatus === 'in_progress')
+                        <h3 class="mt-2 text-xl font-bold text-slate-900">
+                            ¿Ya comprendiste esta etapa?
+                        </h3>
+
+                        <form
+                            action="{{ route('sessions.stages.complete', ['studySession' => $studySession, 'stage' => $activeStageIndex]) }}"
+                            method="POST"
+                            class="mt-5"
+                        >
+                            @csrf
+
+                            <button
+                                type="submit"
+                                class="rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white transition hover:bg-indigo-700"
+                            >
+                                Entendí este tema
+                            </button>
+                        </form>
+                    @else
+                        <p class="mt-2 text-slate-600">
+                            Esta etapa estará disponible cuando completes la anterior.
+                        </p>
+                    @endif
+                </section>
+            @endif
+
+            <section class="mt-8 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+                <h3 class="text-xl font-bold text-slate-900">
+                    ¿Todavía tienes dudas?
+                </h3>
+
+                <p class="mt-2 text-sm leading-6 text-slate-500">
+                    Pregunta sobre la materia y el contenido original de esta sesión.
+                </p>
+
+                <form
+                    action="{{ route('sessions.explanation.ask', $studySession) }}"
+                    method="POST"
+                    class="mt-5 flex flex-col gap-3 sm:flex-row"
+                >
+                    @csrf
+
+                    @if($activeStageIndex !== null)
+                        <input type="hidden" name="stage" value="{{ $activeStageIndex }}">
+                    @endif
+
+                    <input
+                        type="text"
+                        name="question"
+                        value="{{ old('question') }}"
+                        placeholder="Pregúntale a StudyAI sobre este contenido..."
+                        class="min-w-0 flex-1 rounded-xl border border-slate-300 px-4 py-3 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                    >
+
+                    <button
+                        type="submit"
+                        class="rounded-xl bg-indigo-600 px-6 py-3 font-semibold text-white transition hover:bg-indigo-700"
+                    >
+                        Preguntar
+                    </button>
+                </form>
+
+                @if($freeAnswer)
+                    <div class="mt-6 rounded-xl border border-indigo-100 bg-indigo-50 p-6">
+                        <p class="text-sm font-semibold text-indigo-700">
+                            Tu pregunta
+                        </p>
+
+                        <p class="mt-2 font-medium text-indigo-950">
+                            {{ $askedQuestion }}
+                        </p>
+
+                        <p class="mt-4 whitespace-pre-line leading-8 text-slate-700">{{ $freeAnswer }}</p>
+                    </div>
+                @endif
+            </section>
 
         </div>
 

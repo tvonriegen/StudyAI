@@ -10,8 +10,7 @@ class StudySessionController extends Controller
 {
     public function __construct(
         private GroqService $groq
-    ) {
-    }
+    ) {}
 
     /*
     |--------------------------------------------------------------------------
@@ -24,7 +23,6 @@ class StudySessionController extends Controller
         return view('home');
     }
 
-
     /*
     |--------------------------------------------------------------------------
     | Crear nueva sesión
@@ -35,7 +33,6 @@ class StudySessionController extends Controller
     {
         return view('sessions.create');
     }
-
 
     /*
     |--------------------------------------------------------------------------
@@ -50,7 +47,6 @@ class StudySessionController extends Controller
             'content' => ['required', 'string', 'max:10000'],
             'available_time' => ['required', 'string'],
         ]);
-
 
         $systemPrompt = <<<'PROMPT'
 Eres StudyAI, un tutor académico para estudiantes universitarios.
@@ -77,25 +73,14 @@ IMPORTANTE:
 - No uses bloques de código.
 - Si necesitas una fórmula, escríbela como texto normal.
 
-Usa este formato:
+Para cada etapa entrega:
+- un nombre breve;
+- el tiempo aproximado;
+- qué debe estudiar o hacer el estudiante;
+- una explicación breve de por qué corresponde en ese punto.
 
-1. Nombre de la etapa — tiempo aproximado
-Qué estudiar:
-Explicación breve:
-
-2. Nombre de la etapa — tiempo aproximado
-Qué estudiar:
-Explicación breve:
-
-3. Nombre de la etapa — tiempo aproximado
-Qué estudiar:
-Explicación breve:
-
-4. Repaso y práctica — tiempo aproximado
-Qué hacer:
-Explicación breve:
+La cuarta etapa debe centrarse en repaso y práctica.
 PROMPT;
-
 
         $userPrompt = "
 Materia:
@@ -108,22 +93,20 @@ Contenido o temario:
 {$validated['content']}
 ";
 
-
-        $validated['study_plan'] = $this->groq->generate(
-            $systemPrompt,
-            $userPrompt
-        );
-
+        $validated['study_plan'] = json_encode([
+            'stages' => $this->groq->generateStudyPlan(
+                $systemPrompt,
+                $userPrompt
+            ),
+        ], JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR);
 
         $studySession = StudySession::create($validated);
-
 
         return redirect()->route(
             'sessions.plan',
             $studySession
         );
     }
-
 
     /*
     |--------------------------------------------------------------------------
@@ -133,12 +116,29 @@ Contenido o temario:
 
     public function plan(StudySession $studySession)
     {
-        return view(
-            'sessions.plan',
-            compact('studySession')
-        );
+        return view('sessions.plan', [
+            'studySession' => $studySession,
+            'stages' => $studySession->studyPlanStages(),
+            'progress' => $studySession->progressPercentage(),
+        ]);
     }
 
+    public function completeStage(StudySession $studySession, int $stage)
+    {
+        if (! $studySession->completeStage($stage)) {
+            return back()->withErrors([
+                'progress' => 'Completa primero la etapa que está en progreso.',
+            ]);
+        }
+
+        $message = $studySession->nextStageIndex() === null
+            ? '¡Completaste toda la ruta de estudio!'
+            : 'Etapa completada. Ya puedes continuar con la siguiente.';
+
+        return redirect()
+            ->route('sessions.plan', $studySession)
+            ->with('status', $message);
+    }
 
     /*
     |--------------------------------------------------------------------------
@@ -159,7 +159,6 @@ Contenido o temario:
 
         $mode = $request->query('mode', 'summary');
 
-
         if (! in_array($mode, [
             'summary',
             'explanation',
@@ -167,7 +166,6 @@ Contenido o temario:
         ])) {
             $mode = 'summary';
         }
-
 
         /*
         |--------------------------------------------------------------------------
@@ -183,6 +181,26 @@ Contenido o temario:
 {$studySession->content}
 ";
 
+        $activeStageIndex = null;
+
+        if ($request->has('stage')) {
+            $requestedStage = $request->integer('stage');
+            $stages = $studySession->studyPlanStages();
+
+            if (isset($stages[$requestedStage])) {
+                $activeStageIndex = $requestedStage;
+                $stage = $stages[$requestedStage];
+                $userPrompt .= "
+
+Etapa actual de la ruta de estudio:
+{$stage['title']}
+{$stage['content']}
+{$stage['explanation']}
+
+Prioriza la explicación de esta etapa sin perder el contexto del contenido original.
+";
+            }
+        }
 
         /*
         |--------------------------------------------------------------------------
@@ -195,12 +213,10 @@ Contenido o temario:
             $sessionKey =
                 'studyai_questions_'.$studySession->id;
 
-
             $previousQuestions = session(
                 $sessionKey,
                 []
             );
-
 
             if (count($previousQuestions) > 0) {
 
@@ -217,7 +233,6 @@ Contenido o temario:
                 $questionsToAvoid =
                     'No existen preguntas anteriores.';
             }
-
 
             $systemPrompt = <<<'PROMPT'
 Eres StudyAI, un tutor académico universitario.
@@ -255,7 +270,6 @@ No utilices LaTeX.
 Responde en español.
 PROMPT;
 
-
             $questionPrompt = "
 Materia:
 {$studySession->subject}
@@ -271,12 +285,10 @@ Genera cinco preguntas diferentes
 a todas las anteriores.
 ";
 
-
             $questions = $this->groq->generateQuestions(
                 $systemPrompt,
                 $questionPrompt
             );
-
 
             /*
             |--------------------------------------------------------------------------
@@ -289,23 +301,19 @@ a todas las anteriores.
                 'question'
             );
 
-
             $questionHistory = array_merge(
                 $previousQuestions,
                 $newQuestions
             );
-
 
             $questionHistory = array_slice(
                 $questionHistory,
                 -25
             );
 
-
             session([
                 $sessionKey => $questionHistory,
             ]);
-
 
             return view('sessions.assistant', [
                 'studySession' => $studySession,
@@ -315,7 +323,6 @@ a todas las anteriores.
                 'explanation' => null,
             ]);
         }
-
 
         /*
         |--------------------------------------------------------------------------
@@ -354,12 +361,10 @@ Responde en español.
 Si existe una fórmula, escríbela como texto normal.
 PROMPT;
 
-
             $studyContent = $this->groq->generateStudyContent(
                 $systemPrompt,
                 $userPrompt
             );
-
 
             return view('sessions.assistant', [
                 'studySession' => $studySession,
@@ -369,7 +374,6 @@ PROMPT;
                 'explanation' => null,
             ]);
         }
-
 
         /*
         |--------------------------------------------------------------------------
@@ -459,7 +463,6 @@ FORMATO:
 - No utilices tablas Markdown.
 PROMPT;
 
-
             /*
             | IMPORTANTE:
             |
@@ -472,6 +475,9 @@ PROMPT;
                 $userPrompt
             );
 
+            session([
+                $this->explanationSessionKey($studySession) => $explanation,
+            ]);
 
             return view('sessions.assistant', [
                 'studySession' => $studySession,
@@ -479,13 +485,185 @@ PROMPT;
                 'explanation' => $explanation,
                 'studyContent' => null,
                 'questions' => [],
+                'alternativeExplanation' => null,
+                'freeAnswer' => null,
+                'askedQuestion' => null,
+                'activeStageIndex' => $activeStageIndex,
             ]);
         }
-
 
         return redirect()->route(
             'sessions.plan',
             $studySession
         );
+    }
+
+    public function alternativeExplanation(
+        Request $request,
+        StudySession $studySession
+    ) {
+        $validated = $request->validate([
+            'section_index' => ['required', 'integer', 'min:0'],
+            'stage' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $explanation = session($this->explanationSessionKey($studySession));
+        $section = $explanation['sections'][$validated['section_index']] ?? null;
+
+        if (! is_array($section)) {
+            return redirect()
+                ->route('sessions.assistant', [
+                    'studySession' => $studySession,
+                    'mode' => 'explanation',
+                ])
+                ->withErrors([
+                    'explanation' => 'Vuelve a generar la explicación antes de solicitar otra versión.',
+                ]);
+        }
+
+        $systemPrompt = <<<'PROMPT'
+Eres StudyAI, un tutor académico universitario.
+
+Explica nuevamente el concepto solicitado porque el estudiante no lo entendió.
+
+La nueva explicación debe:
+- abordar exactamente el mismo concepto;
+- usar palabras diferentes y más sencillas;
+- explicar el razonamiento paso a paso;
+- incluir una analogía o un ejemplo concreto cuando sea útil;
+- evitar repetir literalmente la explicación anterior;
+- mantenerse dentro de la materia y del contenido entregado;
+- responder en español y sin Markdown.
+PROMPT;
+
+        $userPrompt = "
+Materia:
+{$studySession->subject}
+
+Contenido original de la sesión:
+{$studySession->content}
+
+Concepto que necesita otra explicación:
+{$section['title']}
+
+Explicación anterior que no debe repetirse:
+{$section['definition']}
+{$section['how_it_works']}
+{$section['example']}
+";
+
+        $activeStageIndex = $this->validStageIndex(
+            $studySession,
+            $validated['stage'] ?? null
+        );
+
+        $alternativeExplanation = [
+            'section_index' => $validated['section_index'],
+            'content' => $this->groq->generate($systemPrompt, $userPrompt),
+        ];
+
+        return view('sessions.assistant', $this->explanationViewData(
+            $studySession,
+            $explanation,
+            $activeStageIndex,
+            $alternativeExplanation
+        ));
+    }
+
+    public function askQuestion(Request $request, StudySession $studySession)
+    {
+        $validated = $request->validate([
+            'question' => ['required', 'string', 'min:5', 'max:1000'],
+            'stage' => ['nullable', 'integer', 'min:0'],
+        ]);
+
+        $explanation = session($this->explanationSessionKey($studySession));
+
+        if (! is_array($explanation)) {
+            return redirect()
+                ->route('sessions.assistant', [
+                    'studySession' => $studySession,
+                    'mode' => 'explanation',
+                ])
+                ->withErrors([
+                    'explanation' => 'Vuelve a generar la explicación antes de hacer una pregunta.',
+                ]);
+        }
+
+        $systemPrompt = <<<'PROMPT'
+Eres StudyAI, un tutor académico universitario.
+
+Responde la duda del estudiante usando la materia y el contenido original como contexto.
+
+Reglas:
+- responde en español con claridad y de forma pedagógica;
+- mantén la respuesta centrada en la materia estudiada;
+- si la pregunta es ajena al contenido, indícalo brevemente y orienta al estudiante de vuelta al tema;
+- no inventes información que no puedas justificar con el contexto académico;
+- no uses Markdown ni LaTeX.
+PROMPT;
+
+        $userPrompt = "
+Materia:
+{$studySession->subject}
+
+Contenido original:
+{$studySession->content}
+
+Pregunta del estudiante:
+{$validated['question']}
+";
+
+        $activeStageIndex = $this->validStageIndex(
+            $studySession,
+            $validated['stage'] ?? null
+        );
+
+        return view('sessions.assistant', $this->explanationViewData(
+            $studySession,
+            $explanation,
+            $activeStageIndex,
+            freeAnswer: $this->groq->generate($systemPrompt, $userPrompt),
+            askedQuestion: $validated['question']
+        ));
+    }
+
+    private function explanationViewData(
+        StudySession $studySession,
+        array $explanation,
+        ?int $activeStageIndex,
+        ?array $alternativeExplanation = null,
+        ?string $freeAnswer = null,
+        ?string $askedQuestion = null
+    ): array {
+        return [
+            'studySession' => $studySession,
+            'mode' => 'explanation',
+            'explanation' => $explanation,
+            'studyContent' => null,
+            'questions' => [],
+            'alternativeExplanation' => $alternativeExplanation,
+            'freeAnswer' => $freeAnswer,
+            'askedQuestion' => $askedQuestion,
+            'activeStageIndex' => $activeStageIndex,
+        ];
+    }
+
+    private function explanationSessionKey(StudySession $studySession): string
+    {
+        return 'studyai_explanation_'.$studySession->id;
+    }
+
+    private function validStageIndex(
+        StudySession $studySession,
+        ?int $stageIndex
+    ): ?int {
+        if ($stageIndex === null) {
+            return null;
+        }
+
+        return isset($studySession->studyPlanStages()[$stageIndex])
+            ? $stageIndex
+            : null;
     }
 }
